@@ -19,18 +19,16 @@ class DigitConfig(object):
         numstaters = int(util.rand_int_between(minstaters, maxstaters))
         minprob = 1. / numstaters
 
-        self.set_staters(list(reversed(sorted(
-            util.rand_float_between(minprob, 1.)
-            for i in range(numstaters)))))
+        self.set_staters(list(util.rand_float_between(minprob, 1.) for i in range(numstaters)))
 
     def set_staters(self, staters):
         self.numstaters = len(staters)
         self.staters = staters
 
     def adjusted_cost(self):
-        # for base n, glyph probability x, if x=1/n then adjusted sum
-        # is 0 (no information contained within) if x=n/n then
-        # adjusted sum is 1
+        # for base n, glyph probability x
+        # if x=1/n then adjusted cost is 0 (no discrimination between states)
+        # if x=n/n then adjusted sum is 1 (perfect discrimination between states)
         def glyphcost(x):
             noisefloor = (1/self.numstaters)
 
@@ -74,14 +72,26 @@ class StoredObjective(object):
             d.write(k)
             self.digits.append(d)
 
-    def storage_accuracy(self):
+    def __str__(self):
+        return str.format(
+            'Staters: {}, Digit Value: {}, Digit Truth: {}, Accuracy: {}, Cost: {}, Score: {}',
+            self.digitconfig.staters,
+            ''.join(list('x' if d.value == -1 else str(d.value) for d in self.digits)),
+            ''.join(list(str(d.truevalue) for d in self.digits)),
+            self.accuracy(),
+            self.cost(),
+            self.score())
+
+    def accuracy(self):
         a = sum( 1 if d.accurate() else 0 for d in self.digits )
-        accuracy_percentage = a / float(len(self.digits))
-        # accuracy_percentage -= (1/self.digitconfig.numstaters) # noise floor....?
+        accuracy_percentage = float(a) / len(self.digits)
         return accuracy_percentage
 
     def cost(self):
         return self.digitconfig.adjusted_cost() * len(self.digits)
+
+    def score(self):
+        return self.accuracy() / self.cost()
 
 
 class Objective(object):
@@ -104,11 +114,12 @@ class Objective(object):
 
 class Trial(object):
 
-    def __init__(self, digitconfig, numtrials, minobjective, maxobjective):
+    def __init__(self, digitconfig, numtrials, minobjective, maxobjective, print_stored_objectives):
         self.digitconfig = digitconfig
         self.numtrials = numtrials
         self.minobjective = minobjective
         self.maxobjective = maxobjective
+        self.print_stored_objectives = print_stored_objectives
 
     def trial(self):
         cumaccuracy = 0.
@@ -119,11 +130,13 @@ class Trial(object):
 
             s = StoredObjective(self.digitconfig)
             s.store(Objective(self.minobjective, self.maxobjective))
-            a = s.storage_accuracy()
 
-            cumaccuracy += a
+            if self.print_stored_objectives:
+                print(s)
+
+            cumaccuracy += s.accuracy()
             cumcost += s.cost()
-            cumscore += a / s.cost()
+            cumscore += s.score()
 
         self.avgaccuracy = cumaccuracy / float(self.numtrials)
         self.avgscore = cumscore / float(self.numtrials)
@@ -138,6 +151,7 @@ class Trial(object):
               ' SumStaters:', sum(self.digitconfig.staters),
               ' AdjCost:', self.digitconfig.adjusted_cost(), sep='')
 
+        
 class Generation(object):
 
     numtrials=1000
@@ -158,13 +172,14 @@ class Generation(object):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--minstaters', dest='minstaters', action='store', default=2)
-    parser.add_argument('--maxstaters', dest='maxstaters', action='store', default=7)
-    parser.add_argument('--minobjective', dest='minobjective', action='store', default=2**32)
-    parser.add_argument('--maxobjective', dest='maxobjective', action='store', default=2**31)
-    parser.add_argument('--numtrials', dest='numtrials', action='store', default=1000)
+    parser.add_argument('--minstaters', dest='minstaters', action='store', type=int, default=2)
+    parser.add_argument('--maxstaters', dest='maxstaters', action='store', type=int, default=7)
+    parser.add_argument('--minobjective', dest='minobjective', action='store', type=int, default=2**32)
+    parser.add_argument('--maxobjective', dest='maxobjective', action='store', type=int, default=2**31)
+    parser.add_argument('--numtrials', dest='numtrials', action='store', type=int, default=2000)
+    parser.add_argument('--print_stored_objectives', dest='print_stored_objectives', action='store_true', default=False)
 
-    subparsers = parser.add_subparsers(help='commands', dest='command')
+    subparsers = parser.add_subparsers(help='available commands', dest='command')
 
     sample_parser = subparsers.add_parser('samples', help='run the samples')
     randomtrials_parser = subparsers.add_parser('randomtrials', help='run random trials')
@@ -180,14 +195,14 @@ if __name__ == "__main__":
         d = DigitConfig()
         d.set_staters([1.0, 1.0])
 
-        t = Trial(d, args.numtrials, args.minobjective, args.maxobjective)
+        t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.print_stored_objectives)
         t.trial()
         t.print_results_string()
 
         d = DigitConfig()
         d.set_staters([1.0, 1.0, 1.0])
 
-        t = Trial(d, args.numtrials, args.minobjective, args.maxobjective)
+        t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.print_stored_objectives)
         t.trial()
         t.print_results_string()
 
@@ -198,7 +213,7 @@ if __name__ == "__main__":
         while True:
             d = DigitConfig()
             d.random_staters(args.minstaters, args.maxstaters)
-            t = Trial(d, args.numtrials, args.minobjective, args.maxobjective)
+            t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.print_stored_objectives)
             t.trial()
 
             if t.avgscore > high_score:
