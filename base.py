@@ -21,11 +21,8 @@ class DigitConfig(object):
 
     def get_rand_stater_perc(self, minprob):
         # 10% get ones
-        p = util.rand_float_between(minprob, 1.1)
-        if p > 1:
-            p = 1.
-
-        return p
+        p = util.rand_float_between(0, 1.1)
+        return p if p < 1 else 1.
 
     def random_staters(self, minstaters, maxstaters):
         numstaters = int(util.rand_int_between(minstaters, maxstaters))
@@ -35,6 +32,7 @@ class DigitConfig(object):
 
     def set_staters(self, staters):
         self.numstaters = len(staters)
+        self.noisefloor = 1/self.numstaters
         self.staters = staters
 
     def adjusted_cost(self):
@@ -42,12 +40,12 @@ class DigitConfig(object):
         # if x=1/n then adjusted cost is 0 (no discrimination between states)
         # if x=n/n then adjusted sum is 1 (perfect discrimination between states)
         def glyphcost(x):
-            noisefloor = (1/self.numstaters)
+            noisefloor = self.noisefloor
 
-            if x - noisefloor < 0:
+            if x - self.noisefloor < 0:
                 return 0.
 
-            return (x - noisefloor) / (1 - noisefloor)
+            return (x - self.noisefloor) / (1 - self.noisefloor)
 
         return sum(glyphcost(x) for x in self.staters)
 
@@ -66,7 +64,9 @@ class Digit(object):
         # copy of the staters we can manipulate
         statercopy = self.digitconfig.staters[:]
 
-        target_prob = statercopy[value]
+        target_prob = self.digitconfig.noisefloor + (statercopy[value] * (1 - self.digitconfig.noisefloor))
+        # target_prob = statercopy[value]
+
         statercopy[value] = 0
 
         if util.rand_float() < target_prob:
@@ -82,12 +82,7 @@ class Digit(object):
 
             for i in range(len(statercopy)):
 
-                f = statercopy[i]
-
-                if f is None:
-                    continue
-
-                r -= f
+                r -= statercopy[i]
 
                 if r <= 0:
                     self.value = i
@@ -124,8 +119,7 @@ class StoredObjective(object):
 
     def adjdigitaccuracy(self):
         # accuracy of each digit, adjusted to remove the noise floor weighting
-        nf = 1. / self.digitconfig.numstaters
-        return (self.digitaccuracy() - nf) / (1 - nf)
+        return (self.digitaccuracy() - self.digitconfig.noisefloor) / (1 - self.digitconfig.noisefloor)
 
     def endianaccuracy(self):
         # accuracy of actual stored objective integer vs objective
@@ -136,8 +130,8 @@ class StoredObjective(object):
         return sum(self.digitconfig.staters) * len(self.digits)
 
     def score(self):
-        # return self.adjdigitaccuracy() / self.cost()
-        return self.digitaccuracy() / self.cost()
+        return self.adjdigitaccuracy() / self.cost()
+        # return self.digitaccuracy() / self.cost()
 
     def __str__(self):
         return str.format(
@@ -242,9 +236,12 @@ if __name__ == "__main__":
 
     subparsers = parser.add_subparsers(help='available commands', dest='command')
 
-    sample_parser = subparsers.add_parser('samples', help='run the samples')
+    sample_parser = subparsers.add_parser('presets', help='run the presets')
     randomtrials_parser = subparsers.add_parser('randomtrials', help='run random trials')
     spread_parser = subparsers.add_parser('spread', help='run spread')
+
+    randomtrials_parser.add_argument('--hsretrialmult', dest='hsretrialmult', action='store', type=int, default=10, help='high score retrials')
+    spread_parser.add_argument('--divisions', dest='divisions', action='store', type=int, default=100)
 
     args = parser.parse_args()
 
@@ -263,8 +260,8 @@ if __name__ == "__main__":
                   [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
                   [1., 1., math.e - 2],
 
-                  [0.9717208949301608, 0.335328812802043, 1.0],  # 0.03352641565493028
-        ):
+                  [0.038473495673535085, 0.0989485964205993],
+                  [0.9717208949301608, 0.335328812802043, 1.0]):
 
             d = DigitConfig()
             d.set_staters(s)
@@ -289,19 +286,24 @@ if __name__ == "__main__":
     elif args.command == 'spread':
 
         print('SPREAD')
-        high_score = 0
 
-        divisions = 10
+        high_score = 0
+        divisions = args.divisions
 
         for x in range(divisions):
-            print('>>> x=', x)
+            print('>>> x =', x/float(divisions))
             for y in range(divisions):
                 for z in range(divisions):
                     d = DigitConfig()
                     d.set_staters([float(x+1) / divisions, float(y+1) / divisions, float(z+1) / divisions])
+
                     t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.printobj)
                     t.trial()
-
                     if t.avgscore > high_score:
-                        high_score = t.avgscore
-                        t.print_results_string()
+
+                        t = Trial(d, args.numtrials*args.hsretrialmult, args.minobjective, args.maxobjective, args.printobj)
+                        t.trial()
+                        if t.avgscore > high_score:
+
+                            high_score = t.avgscore
+                            t.print_results_string()
