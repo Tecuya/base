@@ -35,19 +35,44 @@ class DigitConfig(object):
         self.noisefloor = 1/self.numstaters
         self.staters = staters
 
-    def adjusted_cost(self):
-        # for base n, glyph probability x
-        # if x=1/n then adjusted cost is 0 (no discrimination between states)
-        # if x=n/n then adjusted sum is 1 (perfect discrimination between states)
-        def glyphcost(x):
-            noisefloor = self.noisefloor
+    ## stopping this after changing write logic so that [0.5, 0.5] -> [0.0, 0.0]
+    #
+    # def adjusted_cost(self):
+    #     # for base n, glyph probability x
+    #     # if x=1/n then adjusted cost is 0 (no discrimination between states)
+    #     # if x=n/n then adjusted sum is 1 (perfect discrimination between states)
+    #     def glyphcost(x):
+    #         noisefloor = self.noisefloor
 
-            if x - self.noisefloor < 0:
-                return 0.
+    #         if x - self.noisefloor < 0:
+    #             return 0.
 
-            return (x - self.noisefloor) / (1 - self.noisefloor)
+    #         return (x - self.noisefloor) / (1 - self.noisefloor)
 
-        return sum(glyphcost(x) for x in self.staters)
+    #     return sum(glyphcost(x) for x in self.staters)
+
+
+    def expecteddigitaccuracy(self):
+        return ((sum(self.staters)/self.numstaters)+1)/self.numstaters
+
+    def expectedscore(self, objective):
+        ss = sum(self.staters)
+        b = self.numstaters
+
+        return (
+            (ss/b + ((1 - ss/b) / b))
+            /
+            (
+                ss * math.ceil(math.log(objective)/math.log(b))
+            )
+        )
+
+    def __str__(self):
+        return str.format(
+            'Staters: {} sum={} avg={} expdigacc={}',
+            self.staters,
+            sum(self.staters), sum(self.staters)/float(self.numstaters),
+            self.expecteddigitaccuracy())
 
 
 class Digit(object):
@@ -130,12 +155,15 @@ class StoredObjective(object):
         return sum(self.digitconfig.staters) * len(self.digits)
 
     def score(self):
-        return self.adjdigitaccuracy() / self.cost()
-        # return self.digitaccuracy() / self.cost()
+        # return self.adjdigitaccuracy() / self.cost()
+        return self.digitaccuracy() / self.cost()
+
+    def expectedscore(self):
+        return self.digitconfig.expectedscore(self.objective.objective)
 
     def __str__(self):
         return str.format(
-            'Staters: {}, Digit Value: {}, Digit Truth: {}, Obj: {} => {}, EndAcc: {}, DigAcc: {}, AdjDigAcc: {}, AdjCost: {}, Cost: {}, Score: {}',
+            'StoredObjective: Staters: {}, Digit Value: {}, Digit Truth: {}, Obj: {} => {}, EndAcc: {}, DigAcc: {}, AdjDigAcc: {}, Cost: {}, Score: {}, ExpScore: {}',
             self.digitconfig.staters,
             ''.join(list('x' if d.value == -1 else str(d.value) for d in self.digits)),
             ''.join(list(str(d.truevalue) for d in self.digits)),
@@ -144,9 +172,9 @@ class StoredObjective(object):
             self.endianaccuracy(),
             self.digitaccuracy(),
             self.adjdigitaccuracy(),
-            self.digitconfig.adjusted_cost(),
             self.cost(),
-            self.score())
+            self.score(),
+            self.expectedscore())
 
 
 class Objective(object):
@@ -177,9 +205,14 @@ class Trial(object):
         self.printobj = printobj
 
     def trial(self):
-        cumaccuracy = 0.
-        cumscore = 0.
-        cumcost = 0.
+
+        stats = {'digitaccuracy': [lambda so: so.digitaccuracy(), 0.],
+                 'adjdigitaccuracy': [lambda so: so.adjdigitaccuracy(), 0.],
+                 'endianaccuracy': [lambda so: so.endianaccuracy(), 0.],
+                 'expectedscore': [lambda so: so.expectedscore(), 0.],
+                 'score': [lambda so: so.score(), 0.],
+                 'cost': [lambda so: so.cost(), 0.],
+                 'digits': [lambda so: len(so.digits), 0.]}
 
         for t in range(self.numtrials):
 
@@ -189,27 +222,18 @@ class Trial(object):
             if self.printobj:
                 print(s)
 
-            cumaccuracy += s.adjdigitaccuracy()
-            cumcost += s.cost()
-            cumscore += s.score()
+            for key,stat in stats.items():
+                stat[1] += stat[0](s)
 
-        self.avgaccuracy = cumaccuracy / float(self.numtrials)
-        self.avgscore = cumscore / float(self.numtrials)
-        self.avgcost = cumcost / float(self.numtrials)
+        self.results = dict((k, v[1]/self.numtrials) for k, v in stats.items())
 
-    def print_results_string(self):
-        print(util.time_since_start(),
-              ' | S:', self.avgscore,
-              ' A:', self.avgaccuracy,
-              ' C:', self.avgcost,
-              ' Staters:', self.digitconfig.staters,
-              ' SumStaters:', sum(self.digitconfig.staters),
-              ' AdjCost:', self.digitconfig.adjusted_cost(), sep='')
+    def __str__(self):
+        return str(self.results)
 
 
 class Generation(object):
 
-    numtrials=1000
+    numtrials = 1000
 
     def __init__(self, members):
         self.members = members
@@ -224,6 +248,10 @@ class Generation(object):
             od[t.avgscore] = m
 
 
+def output(d, t):
+    print(d, "\n", t, "\n")
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -231,17 +259,17 @@ if __name__ == "__main__":
     parser.add_argument('--maxstaters', dest='maxstaters', action='store', type=int, default=7)
     parser.add_argument('--minobjective', dest='minobjective', action='store', type=int, default=2**32)
     parser.add_argument('--maxobjective', dest='maxobjective', action='store', type=int, default=2**31)
-    parser.add_argument('--numtrials', dest='numtrials', action='store', type=int, default=2000)
+    parser.add_argument('--numtrials', dest='numtrials', action='store', type=int, default=750)
     parser.add_argument('--printobj', dest='printobj', action='store_true', default=False)
 
     subparsers = parser.add_subparsers(help='available commands', dest='command')
 
     sample_parser = subparsers.add_parser('presets', help='run the presets')
     randomtrials_parser = subparsers.add_parser('randomtrials', help='run random trials')
-    spread_parser = subparsers.add_parser('spread', help='run spread')
+    rainbow_parser = subparsers.add_parser('rainbow', help='run rainbow')
 
-    randomtrials_parser.add_argument('--hsretrialmult', dest='hsretrialmult', action='store', type=int, default=10, help='high score retrials')
-    spread_parser.add_argument('--divisions', dest='divisions', action='store', type=int, default=100)
+    randomtrials_parser.add_argument('--hsretrialmult', dest='hsretrialmult', action='store', type=int, default=3, help='high score retrials')
+    rainbow_parser.add_argument('--divisions', dest='divisions', action='store', type=int, default=10)
 
     args = parser.parse_args()
 
@@ -254,12 +282,12 @@ if __name__ == "__main__":
         for s in ([1., 1.],
                   [1/2., 1/2.],
                   [1., 1., 1.],
+                  [.8, .8, .8],
                   [1/3., 1/3., 1/3.],
                   [math.e/3, math.e/3, math.e/3],
                   [math.e/4, math.e/4, math.e/4, math.e/4],
                   [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
                   [1., 1., math.e - 2],
-
                   [0.038473495673535085, 0.0989485964205993],
                   [0.9717208949301608, 0.335328812802043, 1.0]):
 
@@ -267,7 +295,7 @@ if __name__ == "__main__":
             d.set_staters(s)
             t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.printobj)
             t.trial()
-            t.print_results_string()
+            output(d, t)
 
     elif args.command == 'randomtrials':
 
@@ -279,31 +307,28 @@ if __name__ == "__main__":
             t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.printobj)
             t.trial()
 
-            if t.avgscore > high_score:
-                high_score = t.avgscore
-                t.print_results_string()
+            if t.results['score'] > high_score:
+                high_score = t.results['score']
+                output(d, t)
 
-    elif args.command == 'spread':
+    elif args.command == 'rainbow':
 
-        print('SPREAD')
+        print('RAINBOW')
 
         high_score = 0
         divisions = args.divisions
 
         for x in range(divisions):
-            print('>>> x =', x/float(divisions))
+            print('>>> x =', float(x+1)/divisions)
             for y in range(divisions):
                 for z in range(divisions):
+
                     d = DigitConfig()
                     d.set_staters([float(x+1) / divisions, float(y+1) / divisions, float(z+1) / divisions])
 
                     t = Trial(d, args.numtrials, args.minobjective, args.maxobjective, args.printobj)
                     t.trial()
-                    if t.avgscore > high_score:
 
-                        t = Trial(d, args.numtrials*args.hsretrialmult, args.minobjective, args.maxobjective, args.printobj)
-                        t.trial()
-                        if t.avgscore > high_score:
-
-                            high_score = t.avgscore
-                            t.print_results_string()
+                    if t.results['score'] > high_score:
+                        high_score = t.results['score']
+                        output(d, t)
