@@ -35,8 +35,8 @@ class DigitConfig(object):
         self.noisefloor = 1/self.numstaters
         self.staters = staters
 
-    ## stopping this after changing write logic so that [0.5, 0.5] -> [0.0, 0.0]
-    #
+    # ## stopping this after changing write logic so that [0.5, 0.5] -> [0.0, 0.0]
+    # #
     # def adjusted_cost(self):
     #     # for base n, glyph probability x
     #     # if x=1/n then adjusted cost is 0 (no discrimination between states)
@@ -51,28 +51,46 @@ class DigitConfig(object):
 
     #     return sum(glyphcost(x) for x in self.staters)
 
+    def adjusted_stater_cost(self):
+        # stater [0, 0], sum staters is 0, so should we say there is
+        # no cost to this?  then how could it be that [0, 0, 0] is
+        # less accurate than [0, 0] if they both put 0 effort in to
+        # storing information?
+
+        # another way is to say [0, 0] costs 1, [0, 0, 0] costs 1
+        # and [1, 1] costs 2 and [1, 1, 1] costs 3
+
+        return sum(map(lambda x: x + ((1 - x) * self.noisefloor), self.staters))
+
+    def expectedadjdigitaccuracy(self):
+        return sum(self.staters)/self.numstaters
 
     def expecteddigitaccuracy(self):
-        return ((sum(self.staters)/self.numstaters)+1)/self.numstaters
+        a = self.expectedadjdigitaccuracy()
+        return (a + ((1 - a)/self.numstaters))
 
-    def expectedscore(self, objective):
-        ss = sum(self.staters)
-        b = self.numstaters
+    # def expectedscore(self, objective):
+    #     return self.expecteddigitaccuracy() / (sum(self.staters) * len(objective.objective_states(self.numstaters)))
 
-        return (
-            (ss/b + ((1 - ss/b) / b))
-            /
-            (
-                ss * math.ceil(math.log(objective)/math.log(b))
-            )
-        )
+        # compressed version of expected score
+        #
+        # ss = sum(self.staters)
+        # b = self.numstaters
+        # return (
+        #     (ss/b + ((1 - ss/b) / b))
+        #     /
+        #     (
+        #         ss * math.ceil(math.log(objective.objective)/math.log(b))
+        #     )
+        # )
 
     def __str__(self):
         return str.format(
-            'Staters: {} sum={} avg={} expdigacc={}',
+            'Staters: {} sum={} avg={} expdigacc={} expadjdigacc={}',
             self.staters,
             sum(self.staters), sum(self.staters)/float(self.numstaters),
-            self.expecteddigitaccuracy())
+            self.expecteddigitaccuracy(),
+            self.expectedadjdigitaccuracy())
 
 
 class Digit(object):
@@ -151,16 +169,20 @@ class StoredObjective(object):
         return (self.objective.objective - abs(self.objective.objective - self.read())) / self.objective.objective
 
     def cost(self):
-        # return self.digitconfig.adjusted_cost() * len(self.digits)
-        return sum(self.digitconfig.staters) * len(self.digits)
+        # return sum(self.digitconfig.staters) * len(self.digits)
+        return self.digitconfig.adjusted_stater_cost() * len(self.digits)
 
     def score(self):
-        # return self.adjdigitaccuracy() / self.cost()
-        return self.digitaccuracy() / self.cost()
+        return self.adjdigitaccuracy() / self.cost()
+        # return self.digitaccuracy() / self.cost()
 
     def expectedscore(self):
-        return self.digitconfig.expectedscore(self.objective.objective)
+        # return (self.digitconfig.expectedadjdigitaccuracy() /
+        #         (sum(self.digitconfig.staters) * len(self.objective.objective_states(self.digitconfig.numstaters))))
 
+        return (self.digitconfig.expectedadjdigitaccuracy() /
+                (self.digitconfig.adjusted_stater_cost() * len(self.objective.objective_states(self.digitconfig.numstaters))))
+        
     def __str__(self):
         return str.format(
             'StoredObjective: Staters: {}, Digit Value: {}, Digit Truth: {}, Obj: {} => {}, EndAcc: {}, DigAcc: {}, AdjDigAcc: {}, Cost: {}, Score: {}, ExpScore: {}',
@@ -179,8 +201,12 @@ class StoredObjective(object):
 
 class Objective(object):
 
-    def __init__(self, minobjective, maxobjective):
-        self.objective = util.rand_int_between(minobjective, maxobjective)
+    def __init__(self, objective):
+        self.objective = objective
+
+    @classmethod
+    def from_random(cls, minobjective, maxobjective):
+        return cls(util.rand_int_between(minobjective, maxobjective))
 
     def objective_states(self, base):
         numdigits = int(math.ceil(math.log(self.objective) / math.log(base)))
@@ -217,7 +243,7 @@ class Trial(object):
         for t in range(self.numtrials):
 
             s = StoredObjective(self.digitconfig)
-            s.store(Objective(self.minobjective, self.maxobjective))
+            s.store(Objective.from_random(self.minobjective, self.maxobjective))
 
             if self.printobj:
                 print(s)
@@ -268,7 +294,7 @@ if __name__ == "__main__":
     randomtrials_parser = subparsers.add_parser('randomtrials', help='run random trials')
     rainbow_parser = subparsers.add_parser('rainbow', help='run rainbow')
 
-    randomtrials_parser.add_argument('--hsretrialmult', dest='hsretrialmult', action='store', type=int, default=3, help='high score retrials')
+    randomtrials_parser.add_argument('--hsretrialmult', dest='hsretrialmult', action='store', type=int, default=2, help='high score retrials')
     rainbow_parser.add_argument('--divisions', dest='divisions', action='store', type=int, default=10)
 
     args = parser.parse_args()
@@ -279,17 +305,19 @@ if __name__ == "__main__":
     elif args.command == 'presets':
         print('PRESETS')
 
-        for s in ([1., 1.],
-                  [1/2., 1/2.],
-                  [1., 1., 1.],
-                  [.8, .8, .8],
-                  [1/3., 1/3., 1/3.],
-                  [math.e/3, math.e/3, math.e/3],
-                  [math.e/4, math.e/4, math.e/4, math.e/4],
-                  [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
-                  [1., 1., math.e - 2],
-                  [0.038473495673535085, 0.0989485964205993],
-                  [0.9717208949301608, 0.335328812802043, 1.0]):
+        for s in ([.3, .3, .3],
+                  [.4, .4, .4],
+                  [.45, .45],
+                  [.3, .3]):
+        # for s in ([1., 1.],
+        #           [1/2., 1/2.],
+        #           [1., 1., 1.],
+        #           [.8, .8, .8],
+        #           [1/3., 1/3., 1/3.],
+        #           [math.e/3, math.e/3, math.e/3],
+        #           [math.e/4, math.e/4, math.e/4, math.e/4],
+        #           [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
+        #           [.01, .01, .01]):
 
             d = DigitConfig()
             d.set_staters(s)
