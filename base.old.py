@@ -153,6 +153,12 @@ r.initialize_glyphs()
 r.trial()
 r.print_trial_results()
 
+r.glyphs = [1.0, 0.3783591036848181, 0.3524628882032231, 0.3322993141570247]
+r.initialize_glyphs()
+r.trial()
+r.print_trial_results()
+
+
 for i in range(7):
     if i < 3:
         continue

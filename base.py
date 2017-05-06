@@ -21,7 +21,7 @@ class DigitConfig(object):
 
     def get_rand_stater_perc(self, minprob):
         # 10% get ones
-        p = util.rand_float_between(0, 1.1)
+        p = util.rand_float_between(0, 1.5)
         return p if p < 1 else 1.
 
     def random_staters(self, minstaters, maxstaters):
@@ -168,24 +168,27 @@ class StoredObjective(object):
         # accuracy of actual stored objective integer vs objective
         return (self.objective.objective - abs(self.objective.objective - self.read())) / self.objective.objective
 
-    def cost(self):
-        # return sum(self.digitconfig.staters) * len(self.digits)
+    def adjusted_cost(self):
         return self.digitconfig.adjusted_stater_cost() * len(self.digits)
+
+    def cost(self):
+        return sum(self.digitconfig.staters) * len(self.digits)
 
     def score(self):
         return self.adjdigitaccuracy() / self.cost()
+        # return self.digitaccuracy() / self.adjusted_cost()
         # return self.digitaccuracy() / self.cost()
 
     def expectedscore(self):
         # return (self.digitconfig.expectedadjdigitaccuracy() /
         #         (sum(self.digitconfig.staters) * len(self.objective.objective_states(self.digitconfig.numstaters))))
 
-        return (self.digitconfig.expectedadjdigitaccuracy() /
+        return (self.digitconfig.expecteddigitaccuracy() /
                 (self.digitconfig.adjusted_stater_cost() * len(self.objective.objective_states(self.digitconfig.numstaters))))
-        
+
     def __str__(self):
         return str.format(
-            'StoredObjective: Staters: {}, Digit Value: {}, Digit Truth: {}, Obj: {} => {}, EndAcc: {}, DigAcc: {}, AdjDigAcc: {}, Cost: {}, Score: {}, ExpScore: {}',
+            'StoredObjective: Staters: {}, Digit Value: {}, Digit Truth: {}, Obj: {} => {}, EndAcc: {}, DigAcc: {}, AdjDigAcc: {}, Cost: {}, AdjCost: (), Score: {}, ExpScore: {}',
             self.digitconfig.staters,
             ''.join(list('x' if d.value == -1 else str(d.value) for d in self.digits)),
             ''.join(list(str(d.truevalue) for d in self.digits)),
@@ -194,6 +197,7 @@ class StoredObjective(object):
             self.endianaccuracy(),
             self.digitaccuracy(),
             self.adjdigitaccuracy(),
+            self.cost(),
             self.cost(),
             self.score(),
             self.expectedscore())
@@ -238,6 +242,7 @@ class Trial(object):
                  'expectedscore': [lambda so: so.expectedscore(), 0.],
                  'score': [lambda so: so.score(), 0.],
                  'cost': [lambda so: so.cost(), 0.],
+                 'adjcost': [lambda so: so.adjusted_cost(), 0.],
                  'digits': [lambda so: len(so.digits), 0.]}
 
         for t in range(self.numtrials):
@@ -308,16 +313,16 @@ if __name__ == "__main__":
         for s in ([.3, .3, .3],
                   [.4, .4, .4],
                   [.45, .45],
-                  [.3, .3]):
-        # for s in ([1., 1.],
-        #           [1/2., 1/2.],
-        #           [1., 1., 1.],
-        #           [.8, .8, .8],
-        #           [1/3., 1/3., 1/3.],
-        #           [math.e/3, math.e/3, math.e/3],
-        #           [math.e/4, math.e/4, math.e/4, math.e/4],
-        #           [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
-        #           [.01, .01, .01]):
+                  [.3, .3],
+                  [1., 1.],
+                  [1/2., 1/2.],
+                  [1., 1., 1.],
+                  [.8, .8, .8],
+                  [1/3., 1/3., 1/3.],
+                  [math.e/3, math.e/3, math.e/3],
+                  [math.e/4, math.e/4, math.e/4, math.e/4],
+                  [math.e/5, math.e/5, math.e/5, math.e/5, math.e/5],
+                  [.01, .01, .01]):
 
             d = DigitConfig()
             d.set_staters(s)
